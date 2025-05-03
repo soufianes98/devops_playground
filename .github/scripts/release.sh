@@ -20,7 +20,6 @@ export GPG_TTY=$(tty)
 #GIT_AUTHOR_NAME
 
 # Declaring global variables
-unset is_first_release
 unset is_pre_release
 unset latest_tag
 unset next_tag
@@ -62,7 +61,7 @@ LOG_LEVEL_ERROR="ERROR"
 log() {
     local LOG_LEVEL=$1
     local MESSAGE=$2
-    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+    local TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
     case ${LOG_LEVEL} in
     INFO) COLOR="\033[;32m" ;;  # Green
@@ -75,6 +74,7 @@ log() {
     echo -e "${COLOR}[${TIMESTAMP}] [${LOG_LEVEL}] ${MESSAGE}\033[m" | tee -a "${LOG_FILE}"
 }
 
+# LGTM
 verify_conditions() {
     echo "===== Verify Conditions ======"
 
@@ -105,7 +105,7 @@ verify_conditions() {
     log "${LOG_LEVEL_INFO}" "All required commands and environment variables are verified! ✔️"
 }
 
-# TODO:
+# LGTM
 setup_git() {
     echo "===== Setup git ======"
 
@@ -170,31 +170,29 @@ EOF
     log "${LOG_LEVEL_INFO}" "Git setup complete. ✔️"
 }
 
+
 check_git_tags() {
     echo "===== Check git tags ======"
 
     # Check for tags that starts with "v" (e.g., v0.1.0)
     if [ -z "$(git tag --list "v*")" ]; then
         log "${LOG_LEVEL_INFO}" "No tags found in $REPOSITORY_NAME project, This is likely the first release."
-        is_first_release=true
         latest_tag=""
     else
         # Get the most recent tag and remove "v" prefix
         # `git describe --tags --abbrev=0` gets the most recent tag
         # sed removes the "v" prefix from the version number
-        latest_tag=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//') # Example output 0.1.0
+        latest_tag=$(git describe --abbrev=0 --tags 2>/dev/null | sed 's/^v//') # Example output 0.1.0
 
         if [ -n "$latest_tag" ]; then
             log "${LOG_LEVEL_INFO}" "Tags detected in the $REPOSITORY_NAME"
             log "${LOG_LEVEL_INFO}" "Latest tag found v$latest_tag"
-            is_first_release=false
         else
             log "${LOG_LEVEL_ERROR}" "Unable to determine the latest tag."
             exit 1
         fi
     fi
 
-    log "${LOG_LEVEL_INFO}" "is_first_release = $is_first_release"
     log "${LOG_LEVEL_INFO}" "latest_tag = $latest_tag"
 }
 
@@ -456,7 +454,7 @@ bump_version() {
     # Create a git tag if all conditions met
 
     # Handle first release
-    if [[ "$is_first_release" = true ]]; then
+    if [[ -z "$latest_tag" ]]; then
         # initial commit | first commit
         next_tag="0.1.0"
         is_pre_release=true
@@ -580,7 +578,7 @@ prepare_latest_changelog() {
 
     local release_notes=""
 
-    if [[ "$is_first_release" = true ]]; then
+    if [[ -z "$latest_tag" ]]; then
         release_notes="initial commit"
 
         # This is like a return value
@@ -848,14 +846,15 @@ generate_changelog() {
     # Append or create a CHANGELOG.md file
     local changelog_file="CHANGELOG.md"
 
-    if [ "$is_first_release" = true ]; then
-        # https://github.com/USERNAME/project-name/releases/tag/v0.1.0
+    # `-z` means that the variable is empty, `-n` means the variable is not empty 
+    if [ -z "$latest_tag" ]; then
+        # e.g. https://github.com/USERNAME/project-name/releases/tag/v0.1.0
         url="https://github.com/$USERNAME/$REPOSITORY_NAME/releases/tag/v$next_tag"
 
         changelog="# Changelog\n\n## [$next_tag]($url) ($current_date)\n\n$latest_changelog"
         # Create the first changelog file
         echo -e "$changelog" >"$changelog_file"
-    elif [ "$is_first_release" = false ]; then
+    elif [ -n "$latest_tag" ]; then
         # https://github.com/USERNAME/project-name/compare/v0.1.0...v0.2.0
         url="https://github.com/$USERNAME/$REPOSITORY_NAME/compare/v$latest_tag...v$next_tag"
 
