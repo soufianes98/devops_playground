@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 
+# Shows each command and it's expanded arguments as it's run
+# set -x
+
+# Exit on error
+# set -e
+
+# Treat unset variables as errors
+# set -u
+
+# Strict mode for better error handling
+# Catch errors in pipelines
+# set -euo pipefail
+
 export TERM=xterm-color
 export GPG_TTY=$(tty)
-# Strict mode for better error handling
-# set -euo pipefail
 
 # Unit tests https://github.com/bats-core/bats-core
 # https://stackoverflow.com/questions/971945/unit-tests-for-shell-scripts
@@ -31,18 +42,6 @@ unset next_tag
 # TODO: WRITE/SAVE ALL RESULTS IN A LOG FILE
 # TODO: GENERATE SHA
 
-breaking_changes=()
-new_features=()
-bug_fixes=()
-performance_improvements=()
-reverts=()
-docs=()
-tests=()
-code_refactoring=()
-styling=()
-chores=()
-build=()
-ci=()
 # merged_pull_requests=()
 # closed_issues=()
 
@@ -78,6 +77,9 @@ log() {
 verify_conditions() {
     echo "===== Verify Conditions ======"
 
+    log "${LOG_LEVEL_INFO}" "Install jq"
+    sudo apt-get update && sudo apt-get install -y jq
+
     required_commands=(git tee wget sed awk tr cut mapfile mktemp curl jq basename file)
 
     for cmd in "${required_commands[@]}"; do
@@ -92,7 +94,7 @@ verify_conditions() {
 
     echo "===== Setup Environment Variables ======"
 
-    required_env_vars=(GH_TOKEN GIT_AUTHOR_EMAIL GPG_PRIVATE_KEY GPG_PASSPHRASE GPG_KEY_ID GIT_AUTHOR_NAME USERNAME REPOSITORY_NAME)
+    required_env_vars=(GH_TOKEN GIT_AUTHOR_EMAIL GPG_PRIVATE_KEY GPG_PASSPHRASE GPG_KEY_ID GIT_AUTHOR_NAME GIT_USERNAME REPOSITORY_NAME)
 
     for var in "${required_env_vars[@]}"; do
         # Verify that an environment variable exists
@@ -170,7 +172,7 @@ EOF
     log "${LOG_LEVEL_INFO}" "Git setup complete. ✔️"
 }
 
-
+# LGTM
 check_git_tags() {
     echo "===== Check git tags ======"
 
@@ -186,7 +188,6 @@ check_git_tags() {
 
         if [ -n "$latest_tag" ]; then
             log "${LOG_LEVEL_INFO}" "Tags detected in the $REPOSITORY_NAME"
-            log "${LOG_LEVEL_INFO}" "Latest tag found v$latest_tag"
         else
             log "${LOG_LEVEL_ERROR}" "Unable to determine the latest tag."
             exit 1
@@ -196,227 +197,97 @@ check_git_tags() {
     log "${LOG_LEVEL_INFO}" "latest_tag = $latest_tag"
 }
 
-# Parse a tag into major, minor, and patch versions
+# TODO: https://github.com/soufianes98/devops_playground/actions/runs/14814689065/job/41593729811
 parse_latest_commits() {
     echo "===== Parse latest commits ======"
 
-    # Get the latest commits since the latest tag
-    get_latest_commits_list() {
-        # https://chatgpt.com/share/66fadabb-def8-800f-8e2e-a84503af7586
-
-        # NOTE: You should get latest commits since the latest tag
-        # TODO: Handle if there is no previous tag
-
-        # Declare an empty array
-        local commits_array=()
-
-        #
-        # Format <commit_hash> <subject> <body>
-        local git_format="%h,%s,%b%x00" # Use null byte as separator
-
-        if [ -n "$latest_tag" ]; then
-            while IFS= read -r -d $'\0' commit; do
-                # Only add non-empty commits
-                if [ -n "$commit" ]; then
-                    # log "${LOG_LEVEL_INFO}" "commit = $commit"
-                    # Push one item to commits_array
-                    commits_array+=("$commit")
-                fi
-                # Capturing the output of git log since the latest tag
-                # and feed the output to the while loop
-            done < <(git log "v${latest_tag}"..HEAD --pretty=format:"${git_format}")
-        else
-            # If no tags exist, get all commits
-            log "${LOG_LEVEL_INFO}" "No tags exist!"
-            while IFS= read -r commit; do
-                commits_array+=("$commit")
-            done < <(git log --pretty=format:"${git_format}")
-            log "${LOG_LEVEL_INFO}" "commits_array = ${commits_array[*]}"
-        fi
-
-        # Log all commits for debugging
-        log "Found ${#commits_array[@]} commits since ${latest_tag:-(repository start)}"
-
-        if [ ${#commits_array[@]} -eq 0 ]; then
-            log "${LOG_LEVEL_INFO}" "Warning: No commits found since last tag"
-        fi
-        #
-
-        # Return the array
-        printf "%s\n" "${commits_array[@]}"
-    }
-
-    # Process commit
-    process_commit() {
-        local commit="$1"
-        log "${LOG_LEVEL_INFO}" "commit = $commit"
-
-        # Parse a single commit into its components
-        parse_commit() {
-            local commit="$1"
-            log "${LOG_LEVEL_INFO}" "commit = $commit"
-            local commit_hash commit_subject commit_body
-
-            # Verify if commit is not empty
-            if [ -z "$commit" ]; then
-                log "${LOG_LEVEL_ERROR}" "Error: Empty commit string provided"
-                exit 1
-            fi
-
-            # Split the commit into hash , subject and body using `,` as the delimiter
-            # -r prevents backslash escaping
-            IFS=',' read -r commit_hash commit_subject commit_body <<<"$commit"
-
-            # Trim whitespace from components
-            commit_hash="${commit_hash##*( )}"
-            commit_hash="${commit_hash%%*( )}"
-
-            commit_subject="${commit_subject##*( )}"
-            commit_subject="${commit_subject%%*( )}"
-
-            commit_body="${commit_body##*( )}"
-            commit_body="${commit_body%%*( )}"
-
-            # Verify hash is not empty
-            if [ -z "$commit_hash" ]; then
-                log "${LOG_LEVEL_ERROR}" "Error: Failed to parse commit hash"
-                exit 1
-            fi
-
-            # Return parsed components
-            echo "$commit_hash $commit_subject $commit_body"
-            return 0
-        }
-
-        # Parse the commit
-        read -r commit_hash commit_subject commit_body <<<"$(parse_commit "$commit")"
-
-        if [[ "$commit_subject" == "initial commit" ]]; then
-            log "${LOG_LEVEL_INFO}" "initial commit"
-            return 0
-        fi
-
-        # Extract commit scope from commit_subject
-        commit_scope=$(echo -e "$commit_subject" | sed -n 's/.*(\(.*\)): .*/\1/p')
-
-        # Check if there is a commit scope
-        if [ -n "$commit_scope" ]; then
-            # There is scope
-            log "${LOG_LEVEL_INFO}" "Commit scope founded!"
-            # In this case the commit type is anything before the first '('
-            commit_type=$(echo -e "$commit_subject" | awk -F '(' '{print $1}')
-            log "${LOG_LEVEL_INFO}" "$commit_type"
-        else
-            log "There is no scope!"
-            # In this case the commit type is anything before ':'
-            commit_type="${commit_subject%:*}"
-        fi
-
-        # Check if commit body starts with the word `BREAKING CHANGE: ` in the last or pre last line
-        # https://github.com/semantic-release/semantic-release/commit/2904832967c9160d3e293ce4be7a12aef0318a95
-
-        # TODO: Process breaking changes
-
-        # Check for breaking change marker (!)
-        if [[ "$commit_subject" =~ ^[^:]+! ]]; then
-            breaking_changes+=("${commit_scope},${commit_content}")
-        fi
-
-        # RS = Record separator
-        # gsub(/\n/, " ") is used to replace
-        # commit_body="item1\nhello world\n\nitem2\n\nitem3"
-        mapfile -t body_lines_array < <(echo -e "$commit_body" | awk -v RS='\n\n' '{gsub(/\n/, " "); print}')
-
-        for value in "${body_lines_array[@]}"; do
-            #echo -n "$value"
-
-            if [[ "${value:0:16}" == "BREAKING CHANGE: " ]]; then
-                breaking_change_length="${#value}"
-                breaking_change_content="${value:17:"$((breaking_change_length - 1))"}"
-
-                # TODO
-
-                breaking_changes+=("${commit_scope},${breaking_change_content}")
-            fi
-        done
-
-        # TODO
-
-        # We trim the white space from our commit subject
-        commit_content=$(echo -e "${commit_subject#*:}" | tr -d ' ')
-
-        # Process commit type
-        case $commit_type in
-        "feat")
-            new_features+=("${commit_scope},${commit_content},${commit_hash}")
-            # If we want to use it we need to split it
-            ;;
-        "fix")
-            bug_fixes+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "build")
-            build+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "chore")
-            chores+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "ci")
-            ci+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "docs")
-            docs+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "style")
-            styling+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "refactor")
-            code_refactoring+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "perf")
-            performance_improvements+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "test")
-            tests+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        "revert")
-            reverts+=("${commit_scope},${commit_content},${commit_hash}")
-            ;;
-        *)
-            # TODO:
-            log "${LOG_LEVEL_INFO}" "Warning: Unknown commit type '$commit_type' for commit $commit_hash"
-            ;;
-        esac
-    }
-
-    # Fetch latest commits
-    local commits_array
-
-    mapfile -t commits_array < <(get_latest_commits_list)
-    for commit in "${commits_array[@]}"; do
-        log "${LOG_LEVEL_INFO}" "$commit"
-    done
-
-    if [ ${#commits_array[@]} -eq 0 ]; then
-        log "${LOG_LEVEL_INFO}" "Warning: No commits found"
-        exit 1
+    #latest_tag=""
+    local git_log_cmd
+    if [ -n "$latest_tag" ]; then
+        log "${LOG_LEVEL_INFO}" "Fetching commits since tag: v${latest_tag}"
+        # Get all commits since the latest tag
+        git_log_cmd=(git log v"${latest_tag}"..HEAD --pretty=format:'__START__%n%h%n%s%n%b')
+    else
+        # If no tags exist, get all commits
+        log "${LOG_LEVEL_INFO}" "No tags exist, fetching all commits"
+        git_log_cmd=(git log --pretty=format:'__START__%n%h%n%s%n%b')
     fi
 
-    log "${LOG_LEVEL_INFO}" "Found ${#commits_array[@]} commits to process"
+    # Create a new json file using jq
+    jq -n '{data: []}' >data.json
 
-    # Process each commit
-    local commit_count=0
+    # Pipe it to awk
+    "${git_log_cmd[@]}" | awk '
+    BEGIN {
+        RS="";
+        FS="\n";
+        print "["
+    }
 
-    for commit in "${commits_array[@]}"; do
-        ((commit_count++))
-        log "${LOG_LEVEL_INFO}" "Processing commit $commit_count/${commits_array[*]}"
+    function json_escape(str) {
+        if(str == "") return "";
+        gsub(/\\/, "\\\\", str);       # Escape backslashes first
+        gsub(/"/, "\\\"", str);        # Escape quotes
+        gsub(/\//, "\\/", str);        # Escape forward slashes
+        gsub(/\t/, "\\t", str);        # Escape tabs
+        gsub(/\n/, "\\n", str);        # Escape new lines
+        gsub(/\r/ , "\\r", str);       # Escape carriage returns
+        gsub(/[\x00-\x1f]/, "", str); # Escape Remove other control characters
 
-        if ! process_commit "$commit"; then
-            log "${LOG_LEVEL_INFO}" "Warning: Failed to process commit: $commit"
-            continue
-        fi
-    done
+        return str;
+    }
 
-    log "${LOG_LEVEL_INFO}" "===== Commits parsing complete ====="
+    {
+        if (NR > 1) print ","
+
+        hash = json_escape($2);
+        raw_subject = json_escape($3);
+        type = ""; scope = ""; breaking = "false"; message = ""; trigger = "";
+
+        # Parse Conventional Commit subject
+        if (match(raw_subject, /^([a-z]+)(\(([^\)]+)\))?(!)?:[ ]*(.*)$/, parts)) {
+            type = json_escape(parts[1]);
+            scope = json_escape(parts[3]);
+            breaking = (parts[4] == "!") ? "true" : "false";
+            trigger = (parts[4] == "!") ? "subject" : "";
+            message = json_escape(parts[5]);
+        } else {
+            message = raw_subject;
+        }
+
+        body_lines = "";
+        body_count = 0;
+        for (i = 4; i <= NF; i++) {
+            line = json_escape($i);
+            if (line == "") continue;
+
+            if (body_count++ > 0) body_lines = body_lines ",\n";
+            body_lines = body_lines "    \"" line "\"";
+
+            if (line ~ /^BREAKING CHANGE:/) {
+                breaking = "true";
+                trigger = "body"
+            }
+        }
+
+        # Ensure all fields are properly quoted and escaped
+        printf "  {\n";
+        printf "    \"hash\": \"%s\", \n", hash;
+        printf "    \"raw_subject\": \"%s\",\n", raw_subject;
+        printf "    \"type\": \"%s\",\n", type;
+        printf "    \"scope\": \"%s\",\n", scope;
+        printf "    \"breaking\": \"%s\",\n", breaking;
+        printf "    \"trigger\": \"%s\",\n", trigger;
+        printf "    \"message\": \"%s\",\n", message;
+        printf "    \"body_lines\": [\n";
+        printf "%s\n", body_lines;
+        printf "    ]\n";
+        printf "  }";
+    }
+
+    END {
+        print "]"
+    }' | jq '{data: .}' >data.json
 
     return 0
 }
@@ -454,8 +325,9 @@ bump_version() {
     # Create a git tag if all conditions met
 
     # Handle first release
+    # If latest_tag is empty
     if [[ -z "$latest_tag" ]]; then
-        # initial commit | first commit
+        # initial commit | first commit | Initial public release
         next_tag="0.1.0"
         is_pre_release=true
         log "${LOG_LEVEL_INFO}" "First release: v$next_tag (pre-release)"
@@ -469,41 +341,42 @@ bump_version() {
 
     # Determine version bump based on changes
     # Array size of: ${#breaking_changes[@]}
-    if [[ ${#breaking_changes[@]} -ne 0 ]]; then
+    breaking_changes_count=$(jq '[.data[] | select(.breaking == "true")] | length' data.json)
+    if [[ "${breaking_changes_count}" -ne 0 ]]; then
         # Bump major(major version increment)
         next_tag="$((++major)).0.0"
         log "${LOG_LEVEL_INFO}" "Major version bump to: v$next_tag"
         is_pre_release=false
 
-        log "${LOG_LEVEL_INFO}" "Breaking changes (${#breaking_changes[@]}):"
-        for change in "${breaking_changes[@]}"; do
-            log "${LOG_LEVEL_INFO}" "   - $change"
-        done
+        log "${LOG_LEVEL_INFO}" "Breaking changes(${breaking_changes_count}):"
 
         return 0 # Exit/Break this function and move to the next function
     fi
 
-    if [[ ${#new_features[@]} -ne 0 || ${#performance_improvements[@]} -ne 0 ]]; then
+    new_features_count=$(jq '[.data[] | select(.type == "feat")] | length' data.json)
+    performance_improvements_count=$(jq '[.data[] | select(.type == "perf")] | length' data.json)
+    if [[ "${new_features_count}" -ne 0 || "${performance_improvements_count}" -ne 0 ]]; then
         # Bump minor
         next_tag="$major.$((++minor)).0"
         log "${LOG_LEVEL_INFO}" "Minor version bump to: v$next_tag"
 
         is_pre_release=("$major" -eq 0)
 
-        log "${LOG_LEVEL_INFO}" "New Features: ${#new_features[@]}"
-        log "${LOG_LEVEL_INFO}" "Performance Improvements: ${#performance_improvements[@]}"
+        log "${LOG_LEVEL_INFO}" "New Features(${new_features_count})"
+        log "${LOG_LEVEL_INFO}" "Performance Improvements: ${performance_improvements_count}"
 
         return 0 # Exit/Break this function and move to the next function
     fi
 
-    if [[ ${#bug_fixes[@]} -ne 0 ]]; then
+    bug_fixes_count=$(jq '[.data[] | select(.type == "fix")] | length' data.json)
+    if [[ "${bug_fixes_count}" -ne 0 ]]; then
         # Bump patch
         next_tag="$major.$minor.$((++patch))"
         log "${LOG_LEVEL_INFO}" "Patch version bump to: v$next_tag"
 
         is_pre_release=("$major" -eq 0)
 
-        log "${LOG_LEVEL_INFO}" "Bug Fixes: ${#bug_fixes[@]}"
+        log "${LOG_LEVEL_INFO}" "Bug Fixes(${bug_fixes_count})"
 
         return 0 # Exit/Break this function and move to the next function
     fi
@@ -511,19 +384,28 @@ bump_version() {
     log "${LOG_LEVEL_INFO}" "No version-impacting changes detected in codebase!"
     log "${LOG_LEVEL_INFO}" "Current version remains at v$latest_tag"
 
+    docs_count=$(jq '[.data[] | select(.type == "docs")] | length' data.json)
+    tests_count=$(jq '[.data[] | select(.type == "tests")] | length' data.json)
+    chores_count=$(jq '[.data[] | select(.type == "chore")] | length' data.json)
+    styling_count=$(jq '[.data[] | select(.type == "style")] | length' data.json)
+    build_count=$(jq '[.data[] | select(.type == "build")] | length' data.json)
+    ci_count=$(jq '[.data[] | select(.type == "ci")] | length' data.json)
+    code_refactoring_count=$(jq '[.data[] | select(.type == "feat")] | length' data.json)
+    reverts_count=$(jq '[.data[] | select(.type == "revert")] | length' data.json)
+
     log "${LOG_LEVEL_INFO}" "Change summary:"
-    log "${LOG_LEVEL_INFO}" "Breaking changes: (${#breaking_changes[@]})"
-    log "${LOG_LEVEL_INFO}" "New Features: ${#new_features[@]}"
-    log "${LOG_LEVEL_INFO}" "Performance Improvements: ${#performance_improvements[@]}"
-    log "${LOG_LEVEL_INFO}" "Bug Fixes: ${#bug_fixes[@]}"
-    log "${LOG_LEVEL_INFO}" "Documentation: (${#docs[@]}):"
-    log "${LOG_LEVEL_INFO}" "Chores: ${#chores[@]}"
-    log "${LOG_LEVEL_INFO}" "Refactoring: ${#refactoring[@]}"
-    log "${LOG_LEVEL_INFO}" "Styling: ${#styling[@]}"
-    log "${LOG_LEVEL_INFO}" "Build: (${#build[@]})"
-    log "${LOG_LEVEL_INFO}" "Continuous Integration: ${#ci[@]}"
-    log "${LOG_LEVEL_INFO}" "Code Refactoring: ${#code_refactoring[@]}"
-    log "${LOG_LEVEL_INFO}" "Reverts: ${#reverts[@]}"
+    log "${LOG_LEVEL_INFO}" "Breaking changes(${breaking_changes_count})"
+    log "${LOG_LEVEL_INFO}" "New Features(${new_features_count})"
+    log "${LOG_LEVEL_INFO}" "Performance Improvements(${performance_improvements_count})"
+    log "${LOG_LEVEL_INFO}" "Bug Fixes(${bug_fixes_count})"
+    log "${LOG_LEVEL_INFO}" "Documentation(${docs_count}):"
+    log "${LOG_LEVEL_INFO}" "Tests(${docs_count}):"
+    log "${LOG_LEVEL_INFO}" "Chores(${chores_count})"
+    log "${LOG_LEVEL_INFO}" "Styling(${styling_count})"
+    log "${LOG_LEVEL_INFO}" "Build(${build_count})"
+    log "${LOG_LEVEL_INFO}" "Continuous Integration(${ci_count})"
+    log "${LOG_LEVEL_INFO}" "Code Refactoring(${code_refactoring_count})"
+    log "${LOG_LEVEL_INFO}" "Reverts(${reverts_count})"
 
     # The following code will exit the entire script
     exit 0
@@ -535,38 +417,7 @@ bump_version() {
 prepare_latest_changelog() {
     echo "===== Generate release notes ======"
 
-    parse_commit_subject() {
-        local subject="$1"
-        local commit_scope commit_content commit_hash
-
-        if [ -z "$subject" ]; then
-            log "${LOG_LEVEL_ERROR}" "Error: Empty commit subject provided"
-            exit 1
-        fi
-
-        # Split the vale into scope , content and hash using `,` as the delimiter
-        IFS=',' read -r commit_scope commit_content commit_hash <<<"$subject"
-
-        # Trim whitespace from components
-        commit_scope="${commit_scope##*( )}"
-        commit_scope="${commit_scope%%*( )}"
-
-        commit_content="${commit_content##*( )}"
-        commit_content="${commit_content%%*( )}"
-
-        commit_hash="${commit_hash##*( )}"
-        commit_hash="${commit_hash%%*( )}"
-
-        # Validate hash exists
-        if [ -z "$commit_hash" ]; then
-            log "${LOG_LEVEL_ERROR}" "Error: Missing commit hash in subject: $subject"
-            exit 1
-        fi
-
-        echo "$commit_scope $commit_content $commit_hash"
-        return 0
-    }
-
+    # Helper function
     create_commit_hash_url() {
         local username="$1"
         local repository_name="$1"
@@ -578,258 +429,188 @@ prepare_latest_changelog() {
 
     local release_notes=""
 
+    local breaking_changes_content=""
+    local new_features_content=""
+    local performance_improvements_content=""
+    local bug_fixes_content=""
+    local docs_content=""
+    local test_content=""
+    local chores_content=""
+    local styling_content=""
+    local build_content=""
+    local ci_content=""
+    local code_refactoring_content=""
+    local reverts_content=""
+
     if [[ -z "$latest_tag" ]]; then
         release_notes="initial commit"
 
         # This is like a return value
         echo "$release_notes"
-        return 0
+        return 0 # Will exit this function
     fi
 
-    if [ ${#breaking_changes[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**BREAKING CHANGES**\n\n"
+    json_file="data.json"
+    # jq '.' "$json_file"
 
-        for value in "${breaking_changes[@]}"; do
-            commit_scope=$(echo "$value" | cut -d ',' -f1)
-            breaking_change_content=$(echo "$value" | cut -d ',' -f2)
+    log "${LOG_LEVEL_INFO}" "Processing commits:"
+    while read -r commit; do
+        # Extract fields safely
+        hash=$(echo "$commit" | jq -r '.hash? // ""')
+        type=$(echo "$commit" | jq -r '.type? // ""')
+        scope=$(echo "$commit" | jq -r '.scope? // ""')
+        message=$(echo "$commit" | jq -r '.message? // ""')
+        breaking=$(echo "$commit" | jq -r '.breaking? // "false"')
 
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $breaking_change_content\n"
+        # Process body lines with proper array handling
+        echo "Body:"
+        body_lines=$(echo "$commit" | jq -c '.body_lines? // []')
+
+        if [ "$(echo "$body_lines" | jq 'length')" -gt 0 ]; then
+            echo "$body_lines" | jq -r '.[]' | while read -r line; do
+                # shellcheck disable=SC1019
+                # shellcheck disable=SC1020
+                # shellcheck disable=SC1072
+                # shellcheck disable=SC1073
+                [ -n "$line"] && echo "  - $line"
+                # TODO:
+            done
+        else
+            echo "  (No body content)"
+        fi
+
+        # TODO: "$breaking" -eq true | "$breaking" -eq "true"
+        if [ "$breaking" -eq true ]; then
+            # Append release_notes
+            breaking_changes_content+="**BREAKING CHANGES**\n\n"
+            if [ -n "$scope" ]; then
+                breaking_changes_content+="* ${commit_scope}: ${message}\n"
             else
-                release_notes+="* $breaking_change_content\n"
+                breaking_changes_content+="* ${message}\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No breaking changes found!"
-    fi
+        else
+            log "${LOG_LEVEL_INFO}" "No breaking changes found!"
+        fi
 
-    if [ ${#new_features[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Features**\n\n"
+        case $type in
+        "feat")
+            new_features_content="**Features**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-        for value in "${new_features[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                new_features_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                new_features_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new features found!"
-    fi
+            ;;
+        "perf")
+            performance_improvements_content="**Performance Improvements**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    # Here we check if the array is not empty
-    # `-ne` means not equal
-    # `${#bug_fixes[@]}` gives us the length of the array
-    if [ ${#bug_fixes[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Bug Fixes**\n\n"
-
-        for value in "${bug_fixes[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                performance_improvements_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                performance_improvements_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No bug fixes found!"
-    fi
+            ;;
+        "fix")
+            bug_fixes_content="**Bug Fixes**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#performance_improvements[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Performance Improvements**\n\n"
-
-        for value in "${performance_improvements[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                bug_fixes_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                bug_fixes_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new performance improvements found!"
-    fi
+            ;;
+        "docs")
+            docs_content="**Documentation**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#reverts[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Reverts**\n\n"
-
-        for value in "${reverts[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                docs_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                docs_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new reverts found!"
-    fi
+            ;;
+        "test")
+            test_content="**Tests**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#docs[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Documentation**\n\n"
-
-        for value in "${docs[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                test_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                test_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new docs updates found!"
-    fi
+            ;;
+        "chore")
+            chores_content="**Chores**\n\n"
+            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#tests[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Tests**\n\n"
-
-        for value in "${tests[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                chores_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                chores_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new tests found!"
-    fi
+            ;;
+        "style")
+            styling_content="**Styling**\n\n"
+            styling_content=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#code_refactoring[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Code Refactoring**\n\n"
-
-        for value in "${code_refactoring[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                styling_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                styling_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new code refactoring found!"
-    fi
+            ;;
+        "build")
+            build_content="**Build**\n\n"
+            build_content=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#styling[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Styles**\n\n"
-
-        for value in "${styling[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                build_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                build_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new style updates found!"
-    fi
+            ;;
+        "ci")
+            ci_content="**Continuous Integration**\n\n"
+            ci_content=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#chores[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Chores**\n\n"
-
-        for value in "${chores[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                ci_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                ci_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new chores found!"
-    fi
+            ;;
+        "refactor")
+            code_refactoring_content="**Code Refactoring**\n\n"
+            code_refactoring_content=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#build[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Build**\n\n"
-
-        for value in "${reverts[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                code_refactoring_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                code_refactoring_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No build found!"
-    fi
+            ;;
+        "revert")
+            reverts_content="**Reverts**\n\n"
+            reverts_content=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$hash")
 
-    if [ ${#ci[@]} -ne 0 ]; then
-        # Append release_notes
-        release_notes+="**Continuous Integration**\n\n"
-
-        for value in "${ci[@]}"; do
-            read -r commit_scope commit_content commit_hash <<<"$(parse_commit_subject "$value")"
-            log "${LOG_LEVEL_INFO}" "$commit_scope, $commit_content, $commit_hash"
-
-            commit_hash_url=$(create_commit_hash_url "$USERNAME" "$REPOSITORY_NAME" "$commit_hash")
-
-            if [ -n "$commit_scope" ]; then
-                release_notes+="* $commit_scope: $commit_content ([#$commit_hash]($commit_hash_url))\n"
+            if [ -n "$scope" ]; then
+                reverts_content+="* $scope: $message ([#$hash]($commit_hash_url))\n"
             else
-                release_notes+="* $commit_content ([#$commit_hash]($commit_hash_url))\n"
+                reverts_content+="* $message ([#$hash]($commit_hash_url))\n"
             fi
-        done
-    else
-        log "${LOG_LEVEL_INFO}" "No new CI updates found!"
-    fi
+            ;;
+        *)
+            echo "default: INVALID OPTION!!"
+            ;;
+        esac
+    done < <(jq -c '.data[]' "$json_file")
 
     # TODO
-
+    release_notes="$breaking_changes_content$new_features_content$performance_improvements_content$bug_fixes_content$docs_content$test_content$chores_content$styling_content$build_content$ci_content$code_refactoring_content$reverts_content"
     # This is like a return value
     echo "$release_notes"
 }
@@ -846,7 +627,7 @@ generate_changelog() {
     # Append or create a CHANGELOG.md file
     local changelog_file="CHANGELOG.md"
 
-    # `-z` means that the variable is empty, `-n` means the variable is not empty 
+    # `-z` means that the variable is empty, `-n` means the variable is not empty
     if [ -z "$latest_tag" ]; then
         # e.g. https://github.com/USERNAME/project-name/releases/tag/v0.1.0
         url="https://github.com/$USERNAME/$REPOSITORY_NAME/releases/tag/v$next_tag"
@@ -869,7 +650,6 @@ generate_changelog() {
     fi
 
     log "${LOG_LEVEL_INFO}" "Changelog created"
-
 }
 
 # NOTE: Always publish changelog before creating a new tag
@@ -883,7 +663,6 @@ publish_changelog() {
     git push
 
     log "${LOG_LEVEL_INFO}" "Changelog successfully published"
-
 }
 
 create_new_github_tag() {
@@ -902,7 +681,6 @@ create_new_github_tag() {
 
     # Show the tag details
     git show "v$next_tag"
-
 }
 
 create_github_release() {
@@ -951,33 +729,44 @@ create_github_release() {
 
     log "${LOG_LEVEL_INFO}" "release_notes: $release_notes"
 
+read -r -d '' JSON_PAYLOAD <<EOF
+{
+  "tag_name": "v$next_tag",
+  "target_commitish": "main",
+  "name": "v$next_tag",
+  "body": "$(printf '%s' "$release_notes" | jq -Rs .)",
+  "draft": false,
+  "prerelease": $is_pre_release,
+  "generate_release_notes": true
+}
+EOF
+
     # Create a new release
-    RELEASE_RESPONSE=$(
-        curl -L \
+    HTTP_RESPONSE=$(
+        curl -s -w "%{http_code}" \
+            -L \
             -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/"$USERNAME"/"$REPOSITORY_NAME"/releases \
-            -d "{
-        \"tag_name\": \"v$next_tag\",
-        \"target_commitish\": \"main\",
-        \"name\": \"v$next_tag\",
-        \"body\": \"$release_notes\",
-        \"draft\": false,
-        \"prerelease\": $is_pre_release,
-        \"generate_release_notes\": true
-    }"
+            -d "$JSON_PAYLOAD"
     )
 
-    echo "RELEASE_RESPONSE = $RELEASE_RESPONSE"
+    HTTP_BODY=${HTTP_RESPONSE::-3} # All except last 3 chars
+    HTTP_STATUS=${HTTP_RESPONSE:: -3} # Last 3 chars
 
-    RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
 
-    if [[ "$RELEASE_RESPONSE" == "null" ]]; then
-        echo "ERROR"
-        echo "$RELEASE_RESPONSE" | jq '.message, .errors'
+    if [[ "$HTTP_STATUS" -ne 201 ]]; then
+        log "${LOG_LEVEL_ERROR}" 'Failed to create release, HTTP status ${HTTP_STATUS}'
+        echo "$HTTP_BODY" | jq '.message, .errors' 2>/dev/null || echo "$HTTP_BODY"
         log "${LOG_LEVEL_ERROR}" 'Error: Failed to create a new release in GitHub'
+        exit 1
+    fi
+    
+    RELEASE_ID=$(echo "$HTTP_BODY" | jq -r '.id')
+    if [[ -z "$RELEASE_ID" || "$RELEASE_ID" == "null" ]]; then
+        echo "ERROR: Release ID missing in response"
         exit 1
     fi
 

@@ -1,5 +1,15 @@
 # DevOps Playground
 
+`git config --list --global`
+`rm -f ~/.gitconfig` before starting
+
+Load .env file
+`set -a` Marks all variables for export
+`source .env` Load the file
+`set +a` Turns off automatic export
+
+`bash .github/scripts/release.sh`
+
 <https://www.simplilearn.com/what-is-git-rebase-command-article>
 <https://github.com/soufianes98/devops_playground/actions/workflows/ci.yml>
 
@@ -71,6 +81,7 @@ git push -u origin main
 git branch -m master main
 
 ```
+
 ***Recipe4***
 
 ```bash

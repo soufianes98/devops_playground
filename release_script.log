@@ -1,7 +1,0 @@
-[;31m[2025-05-03 21:54:51] [ERROR] Unable to determine the latest tag.[m
-[;32m[2025-05-03 21:54:51] [INFO] is_first_release = [m
-[;32m[2025-05-03 21:54:51] [INFO] latest_tag = [m
-[;32m[2025-05-03 22:06:04] [INFO] Tags detected in the [m
-[;32m[2025-05-03 22:06:04] [INFO] Latest tag found v0.1.0[m
-[;32m[2025-05-03 22:06:04] [INFO] is_first_release = false[m
-[;32m[2025-05-03 22:06:04] [INFO] latest_tag = 0.1.0[m
