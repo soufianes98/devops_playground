@@ -268,7 +268,7 @@ build_latest_changelog() {
 
             # Only add newline between sections, not extra ones within
             if [ -n "$final_release_notes" ]; then
-                final_release_notes+="\n\n"
+                final_release_notes+="\n"
             fi
 
             final_release_notes+="${section_titles[$sec_type]}\n\n"
