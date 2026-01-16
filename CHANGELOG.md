@@ -1,5 +1,10 @@
 # Changelog
 
+## [](https://github.com/soufianes98/devops_playground/compare/v0.2.0...v) (2026-01-16)
+
+
+
+
 ## [0.2.0](https://github.com/soufianes98/devops_playground/compare/v0.1.0...v0.2.0) (2026-01-16)
 
 **Features**
